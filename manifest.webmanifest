@@ -1,7 +1,7 @@
 {
   "name": "Mis PDF",
   "short_name": "Mis PDF",
-  "description": "Abre archivos PDF, súbelos a Google Drive y compártelos por WhatsApp.",
+  "description": "Abre archivos PDF y compártelos por WhatsApp, Drive o cualquier app.",
   "lang": "es-MX",
   "start_url": "./index.html",
   "scope": "./",

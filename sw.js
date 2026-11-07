@@ -1,5 +1,5 @@
 // Service worker de "Mis PDF": funciona sin conexión y recibe PDFs compartidos desde otras apps.
-const VERSION = 'mispdf-v1';
+const VERSION = 'mispdf-v3';
 const SHELL = [
   './',
   './index.html',

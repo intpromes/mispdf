@@ -1,6 +1,6 @@
 # Mis PDF: app para Android
 
-Abre PDFs, guárdalos en Google Drive y compártelos por WhatsApp. Es una app web instalable (PWA): una vez instalada tiene su propio ícono, se abre a pantalla completa y funciona sin internet para ver los PDF.
+Abre PDFs y compártelos por WhatsApp, Drive o cualquier app. Es una app web instalable (PWA): una vez instalada tiene su propio ícono, se abre a pantalla completa y funciona sin internet para ver los PDF.
 
 ## 1. Publicarla (una sola vez, gratis)
 
@@ -25,22 +25,11 @@ Para que otras personas la instalen, solo mándales la misma dirección.
 
 - **Abrir PDF**: elige archivos del celular. Quedan en *Recientes* para volver a abrirlos.
 - **Desde otras apps**: en WhatsApp, Gmail o Archivos, mantén presionado un PDF → **Compartir** → **Mis PDF**.
-- **WhatsApp**: abre el menú de compartir; elige WhatsApp y el contacto.
-- **Drive**: abre el menú de compartir; elige **Drive** («Guardar en Drive»). No requiere configurar nada.
-- **Compartir**: cualquier otra app (correo, Telegram, etc.).
+- **Compartir**: abre el menú de Android; elige WhatsApp, Drive («Guardar en Drive»), correo o la app que quieras.
+- **Imprimir**: eliges color o blanco y negro, y todas las páginas, la actual o algunas (ej. `1-3, 5`). Luego Android muestra las impresoras Wi-Fi de tu red; ahí eliges impresora, copias y tamaño de papel. Si tu impresora no aparece, revisa en Ajustes de Android → *Impresión* que el **Servicio de impresión predeterminado** (o el de la marca, p. ej. *Brother Print Service Plugin*) esté activado, y que el celular esté en la misma red Wi-Fi.
 - Zoom con los botones − / + o pellizcando la pantalla. Soporta PDF con contraseña.
 
-## 4. Opcional: subida directa a Drive con enlace
 
-Con esto la app sube el PDF sola, con barra de progreso, y te deja mandar **el enlace de Drive** por WhatsApp en lugar del archivo (útil para PDFs pesados).
-
-1. En https://console.cloud.google.com crea un proyecto y habilita **Google Drive API**.
-2. **Pantalla de consentimiento OAuth**: tipo «Externo»; agrega tu correo (y el de quien la vaya a usar) como *usuario de prueba*.
-3. **Credenciales → Crear credenciales → ID de cliente OAuth → Aplicación web**.
-4. En **Orígenes autorizados de JavaScript** pon tu dirección de Netlify, por ejemplo `https://mis-pdf-mauricio.netlify.app` (sin diagonal al final).
-5. Copia el **ID de cliente** y pégalo en la app: ⚙ **Ajustes**. Si quieres, pon también el ID o el enlace de una carpeta de Drive para que todo se guarde ahí.
-
-La app solo pide el permiso `drive.file`, así que únicamente ve los archivos que ella misma sube.
 
 ## Archivos
 
@@ -52,4 +41,4 @@ La app solo pide el permiso `drive.file`, así que únicamente ve los archivos q
 | `vendor/` | PDF.js (Mozilla), el motor que dibuja los PDF |
 | `icons/` | Íconos de la app |
 
-Si cambias algún archivo, sube de versión `VERSION` en `sw.js` (`mispdf-v2`, …) para que los celulares descarguen la actualización.
+Si cambias algún archivo, sube de versión `VERSION` en `sw.js` (`mispdf-v3`, …) para que los celulares descarguen la actualización.

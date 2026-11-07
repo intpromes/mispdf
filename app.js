@@ -1,14 +1,13 @@
-/* Mis PDF — visor de PDF instalable con envío a WhatsApp y Google Drive */
+/* Mis PDF — visor de PDF instalable; comparte por el menú de Android (WhatsApp, Drive, correo...) */
 'use strict';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 const $ = (id) => document.getElementById(id);
 const MAX_RECENTS = 30;
-const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 
 const state = {
-  current: null,      // { id, name, size, date, blob, driveId, driveLink }
+  current: null,      // { id, name, size, date, blob }
   pdf: null,
   zoom: 1,            // 1 = ajustado al ancho
   baseWidth: 0,
@@ -35,12 +34,6 @@ function fmtDate(ts) {
 }
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-function settings() {
-  try { return JSON.parse(localStorage.getItem('mispdf-settings') || '{}'); } catch { return {}; }
-}
-function saveSettings(s) {
-  try { localStorage.setItem('mispdf-settings', JSON.stringify(s)); } catch { /* sin almacenamiento */ }
 }
 function fileOf(rec) {
   return new File([rec.blob], rec.name, { type: 'application/pdf', lastModified: rec.date });
@@ -112,7 +105,7 @@ async function renderRecents() {
       <div class="badge">PDF</div>
       <div class="meta">
         <div class="name">${esc(r.name)}</div>
-        <div class="info">${fmtSize(r.size)} · ${fmtDate(r.date)}${r.driveId ? ' · <span class="drive-tag">en Drive</span>' : ''}</div>
+        <div class="info">${fmtSize(r.size)} · ${fmtDate(r.date)}</div>
       </div>
       <button class="icon-btn" data-act="share" aria-label="Compartir"><svg viewBox="0 0 24 24"><path d="M18 16a3 3 0 0 0-2.2.9l-7-4.1a3.3 3.3 0 0 0 0-1.6l7-4a3 3 0 1 0-1-2.2 3.3 3.3 0 0 0 .1.8l-7 4.1a3 3 0 1 0 0 4.3l7 4.1a2.8 2.8 0 0 0-.1.7A3 3 0 1 0 18 16z"/></svg></button>
       <button class="icon-btn" data-act="del" aria-label="Quitar de recientes"><svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z"/></svg></button>`;
@@ -322,200 +315,161 @@ async function shareFile(rec, hint) {
   return false;
 }
 
-$('btnShare').onclick = () => state.current && shareFile(state.current, 'Elige la app para compartir');
+$('btnShare').onclick = () => state.current && shareFile(state.current, 'Elige WhatsApp, Drive o la app que quieras');
 
-$('btnWhats').onclick = () => {
-  const rec = state.current; if (!rec) return;
-  if (rec.driveLink) {
-    openSheet('Enviar por WhatsApp', `<p>Este PDF ya está en tu Drive. ¿Qué quieres enviar?</p>`, [
-      { text: 'Enviar el archivo PDF', cls: 'whats', fn: () => { closeSheet(); shareFile(rec, 'Elige WhatsApp en la lista'); } },
-      { text: 'Enviar el enlace de Drive', cls: 'primary', fn: () => { closeSheet(); sendLinkWhatsApp(rec); } },
+/* ---------------------------------------------------------------- imprimir */
+const PRINT_DPI = 200;          // calidad de impresión
+const printOpts = { color: true, mode: 'all', range: '' };
+
+function currentPage() {
+  const m = /Página (\d+)/.exec($('pageInfo').textContent);
+  return m ? +m[1] : 1;
+}
+
+// "1-3, 5, 8-10" → [1,2,3,5,8,9,10]; devuelve null si hay un error
+function parseRange(txt, max) {
+  const out = new Set();
+  const parts = txt.split(/[,;\s]+/).filter(Boolean);
+  if (!parts.length) return null;
+  for (const p of parts) {
+    const m = /^(\d+)(?:-(\d+))?$/.exec(p);
+    if (!m) return null;
+    let a = +m[1], b = m[2] ? +m[2] : a;
+    if (a > b) [a, b] = [b, a];
+    if (a < 1 || b > max) return null;
+    for (let i = a; i <= b; i++) out.add(i);
+  }
+  return [...out].sort((x, y) => x - y);
+}
+
+function openPrintSheet() {
+  if (!state.pdf) { toast('Espera a que cargue el PDF'); return; }
+  const total = state.pdf.numPages;
+  const cur = currentPage();
+  openSheet('Imprimir', `
+    <label>Color</label>
+    <div class="seg" id="segColor">
+      <button type="button" data-v="1" class="${printOpts.color ? 'on' : ''}">🎨 Color</button>
+      <button type="button" data-v="0" class="${printOpts.color ? '' : 'on'}">⚫ Blanco y negro</button>
+    </div>
+
+    <label>Páginas <span class="muted">(el documento tiene ${total})</span></label>
+    <div class="radios">
+      <label class="check"><input type="radio" name="pmode" value="all" ${printOpts.mode === 'all' ? 'checked' : ''}><span>Todas</span></label>
+      <label class="check"><input type="radio" name="pmode" value="current" ${printOpts.mode === 'current' ? 'checked' : ''}><span>Solo la página actual (${cur})</span></label>
+      <label class="check"><input type="radio" name="pmode" value="custom" ${printOpts.mode === 'custom' ? 'checked' : ''}><span>Elegir páginas</span></label>
+    </div>
+    <input id="pRange" type="text" inputmode="numeric" placeholder="Ejemplo: 1-3, 5, 8" value="${esc(printOpts.range)}" class="${printOpts.mode === 'custom' ? '' : 'hidden'}">
+    <p id="pErr" class="err hidden"></p>
+
+    <p class="note">Al tocar <b>Imprimir</b>, Android busca las impresoras Wi-Fi de tu red y te deja elegir una, junto con el número de copias y el tamaño de papel.</p>`,
+    [
+      { text: 'Imprimir', cls: 'primary', fn: startPrint },
       { text: 'Cancelar', fn: closeSheet },
     ]);
-    return;
+
+  for (const b of $('segColor').children) {
+    b.onclick = () => {
+      printOpts.color = b.dataset.v === '1';
+      for (const x of $('segColor').children) x.classList.toggle('on', x === b);
+    };
   }
-  shareFile(rec, 'Elige WhatsApp en la lista');
-};
-
-function sendLinkWhatsApp(rec) {
-  const text = `${rec.name}\n${rec.driveLink}`;
-  // wa.me abre WhatsApp directamente con el mensaje listo para elegir el contacto
-  location.href = 'https://wa.me/?text=' + encodeURIComponent(text);
-}
-
-/* ---------------------------------------------------------------- Google Drive */
-$('btnDrive').onclick = () => {
-  const rec = state.current; if (!rec) return;
-  const s = settings();
-  if (rec.driveLink) { showDriveDone(rec); return; }
-  if (!s.clientId) {
-    openSheet('Guardar en Google Drive', `
-      <p>Se abrirá el menú de compartir de Android: elige <b>Drive</b> («Guardar en Drive»), escoge la carpeta y toca <b>Guardar</b>.</p>
-      <p>¿Prefieres subirlo directo desde la app y obtener un enlace para mandarlo por WhatsApp? Activa la <b>subida directa</b> en Ajustes.</p>`,
-      [
-        { text: 'Guardar en Drive', cls: 'drive', fn: () => { closeSheet(); shareFile(rec, 'Elige «Drive» en la lista'); } },
-        { text: 'Configurar subida directa', fn: () => { closeSheet(); openSettings(); } },
-        { text: 'Cancelar', fn: closeSheet },
-      ]);
-    return;
+  for (const r of document.querySelectorAll('input[name=pmode]')) {
+    r.onchange = () => {
+      $('pRange').classList.toggle('hidden', r.value !== 'custom');
+      $('pErr').classList.add('hidden');
+      if (r.value === 'custom') $('pRange').focus();
+    };
   }
-  uploadToDrive(rec);
-};
-
-let gisPromise = null;
-function loadGis() {
-  if (window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
-  if (gisPromise) return gisPromise;
-  gisPromise = new Promise((res, rej) => {
-    const sc = document.createElement('script');
-    sc.src = 'https://accounts.google.com/gsi/client';
-    sc.async = true;
-    sc.onload = res;
-    sc.onerror = () => { gisPromise = null; rej(new Error('Sin conexión con Google')); };
-    document.head.appendChild(sc);
-  });
-  return gisPromise;
 }
 
-let token = null; // { access_token, exp }
-function getToken() {
-  if (token && token.exp > Date.now() + 60000) return Promise.resolve(token.access_token);
-  return new Promise((res, rej) => {
-    const client = google.accounts.oauth2.initTokenClient({
-      client_id: settings().clientId,
-      scope: DRIVE_SCOPE,
-      callback: (r) => {
-        if (r.error) { rej(new Error(r.error_description || r.error)); return; }
-        token = { access_token: r.access_token, exp: Date.now() + (r.expires_in || 3600) * 1000 };
-        res(r.access_token);
-      },
-      error_callback: (e) => rej(new Error(e.type === 'popup_closed' ? 'Cancelaste el inicio de sesión' : (e.message || 'No se pudo iniciar sesión'))),
-    });
-    client.requestAccessToken({ prompt: token ? '' : undefined });
-  });
-}
+async function startPrint() {
+  const total = state.pdf.numPages;
+  const mode = document.querySelector('input[name=pmode]:checked').value;
+  let pages;
+  if (mode === 'all') pages = Array.from({ length: total }, (_, i) => i + 1);
+  else if (mode === 'current') pages = [currentPage()];
+  else {
+    pages = parseRange($('pRange').value, total);
+    if (!pages) {
+      $('pErr').textContent = `Revisa las páginas. Usa números del 1 al ${total}, separados por comas o con guion (1-3, 5).`;
+      $('pErr').classList.remove('hidden');
+      return;
+    }
+    printOpts.range = $('pRange').value.trim();
+  }
+  printOpts.mode = mode;
 
-function uploadSheet(pct, msg) {
-  openSheet('Subiendo a Drive', `
-    <p id="upMsg">${esc(msg)}</p>
-    <div class="progress"><div id="upBar" style="width:${pct}%"></div></div>`, []);
-}
+  openSheet('Preparando impresión', `
+    <p id="prMsg">Preparando…</p>
+    <div class="progress"><div id="prBar"></div></div>`, []);
 
-async function uploadToDrive(rec) {
-  if (!navigator.onLine) { toast('Sin conexión a internet'); return; }
+  const area = $('printArea');
+  clearPrintArea();
+  const pdf = state.pdf;
   try {
-    uploadSheet(0, 'Conectando con Google…');
-    await loadGis();
-    const at = await getToken();
-    const s = settings();
-    const meta = { name: rec.name, mimeType: 'application/pdf' };
-    if (s.folderId) meta.parents = [s.folderId];
-
-    // 1) iniciar subida reanudable
-    const init = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,webViewLink', {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + at, 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': 'application/pdf', 'X-Upload-Content-Length': String(rec.size) },
-      body: JSON.stringify(meta),
-    });
-    if (!init.ok) throw new Error(await apiError(init));
-    const uploadUrl = init.headers.get('Location');
-    if (!uploadUrl) throw new Error('Google no devolvió la dirección de subida');
-
-    // 2) enviar el archivo con barra de progreso
-    const file = await new Promise((res, rej) => {
-      const x = new XMLHttpRequest();
-      x.open('PUT', uploadUrl);
-      x.setRequestHeader('Content-Type', 'application/pdf');
-      x.upload.onprogress = (e) => {
-        if (!e.lengthComputable) return;
-        const p = Math.round((e.loaded / e.total) * 100);
-        const bar = $('upBar'); if (bar) bar.style.width = p + '%';
-        const m = $('upMsg'); if (m) m.textContent = `Subiendo «${rec.name}»… ${p}%`;
-      };
-      x.onload = () => (x.status >= 200 && x.status < 300) ? res(JSON.parse(x.responseText)) : rej(new Error('Error ' + x.status + ' al subir'));
-      x.onerror = () => rej(new Error('Se perdió la conexión'));
-      x.send(rec.blob);
-    });
-
-    rec.driveId = file.id;
-    rec.driveLink = file.webViewLink || `https://drive.google.com/file/d/${file.id}/view`;
-    rec.drivePublic = false;
-    await db.put(rec).catch(() => {});
-    showDriveDone(rec);
+    for (let k = 0; k < pages.length; k++) {
+      $('prMsg').textContent = `Preparando página ${k + 1} de ${pages.length}…`;
+      $('prBar').style.width = Math.round((k / pages.length) * 100) + '%';
+      const url = await renderForPrint(pdf, pages[k], printOpts.color);
+      const div = document.createElement('div');
+      div.className = 'print-page';
+      const img = new Image();
+      img.src = url;
+      await img.decode().catch(() => {});
+      div.appendChild(img);
+      area.appendChild(div);
+    }
   } catch (err) {
-    openSheet('No se pudo subir', `<p>${esc(err.message || err)}</p>`, [
-      { text: 'Reintentar', cls: 'drive', fn: () => { closeSheet(); uploadToDrive(rec); } },
-      { text: 'Usar «Guardar en Drive» de Android', fn: () => { closeSheet(); shareFile(rec, 'Elige «Drive» en la lista'); } },
-      { text: 'Cerrar', fn: closeSheet },
-    ]);
+    clearPrintArea();
+    openSheet('No se pudo preparar', `<p>${esc(err.message || err)}</p>`, [{ text: 'Cerrar', fn: closeSheet }]);
+    return;
   }
+  closeSheet();
+  document.title = state.current.name.replace(/\.pdf$/i, '');   // nombre del trabajo de impresión
+  setTimeout(() => {
+    try { window.print(); }
+    catch { toast('Este navegador no permite imprimir'); }
+  }, 50);
 }
 
-async function apiError(res) {
-  try { const j = await res.json(); return (j.error && j.error.message) || ('Error ' + res.status); } catch { return 'Error ' + res.status; }
+async function renderForPrint(pdf, n, color) {
+  const page = await pdf.getPage(n);
+  const vp = page.getViewport({ scale: PRINT_DPI / 72 });
+  const c = document.createElement('canvas');
+  c.width = Math.floor(vp.width);
+  c.height = Math.floor(vp.height);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, c.width, c.height);
+  await page.render({ canvasContext: ctx, viewport: vp }).promise;
+  if (!color) toGray(ctx, c.width, c.height);
+  const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.92));
+  c.width = c.height = 0; // liberar memoria
+  return URL.createObjectURL(blob);
 }
 
-function showDriveDone(rec) {
-  openSheet('Guardado en Drive ✓', `
-    <p><b>${esc(rec.name)}</b> está en tu Google Drive.</p>
-    <label class="check"><input type="checkbox" id="chkPublic" ${rec.drivePublic ? 'checked disabled' : ''}>
-      <span>Cualquier persona con el enlace puede verlo${rec.drivePublic ? ' (ya activado)' : ' (necesario para que lo abran desde WhatsApp)'}</span></label>`,
-    [
-      { text: 'Enviar enlace por WhatsApp', cls: 'whats', fn: async () => {
-        if ($('chkPublic').checked && !rec.drivePublic) {
-          try { await makePublic(rec); } catch (e) { toast('No se pudo cambiar el permiso: ' + e.message); return; }
-        }
-        closeSheet(); sendLinkWhatsApp(rec);
-      } },
-      { text: 'Abrir en Drive', cls: 'drive', href: rec.driveLink },
-      { text: 'Listo', fn: closeSheet },
-    ]);
+function toGray(ctx, w, h) {
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const y = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    d[i] = d[i + 1] = d[i + 2] = y;
+  }
+  ctx.putImageData(img, 0, 0);
 }
 
-async function makePublic(rec) {
-  await loadGis();
-  const at = await getToken();
-  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${rec.driveId}/permissions`, {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + at, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role: 'reader', type: 'anyone' }),
-  });
-  if (!r.ok) throw new Error(await apiError(r));
-  rec.drivePublic = true;
-  await db.put(rec).catch(() => {});
+function clearPrintArea() {
+  const area = $('printArea');
+  for (const img of area.querySelectorAll('img')) URL.revokeObjectURL(img.src);
+  area.innerHTML = '';
 }
+window.addEventListener('afterprint', () => {
+  document.title = 'Mis PDF';
+  setTimeout(clearPrintArea, 1000);
+});
 
-/* ---------------------------------------------------------------- ajustes */
-function openSettings() {
-  const s = settings();
-  const origin = location.origin;
-  openSheet('Ajustes', `
-    <p><b>Subida directa a Google Drive (opcional).</b> Sin esto la app usa «Guardar en Drive» del menú de compartir, que funciona sin configurar nada.</p>
-    <label for="cid">ID de cliente OAuth de Google</label>
-    <input id="cid" type="text" placeholder="xxxxxxxx.apps.googleusercontent.com" value="${esc(s.clientId || '')}" autocomplete="off" spellcheck="false">
-    <label for="fid">ID de carpeta de Drive (opcional)</label>
-    <input id="fid" type="text" placeholder="Vacío = carpeta raíz «Mi unidad»" value="${esc(s.folderId || '')}" autocomplete="off" spellcheck="false">
-    <p>Para obtener el ID de cliente:</p>
-    <ol>
-      <li>Entra a <b>console.cloud.google.com</b>, crea un proyecto y habilita <b>Google Drive API</b>.</li>
-      <li>En <b>Pantalla de consentimiento OAuth</b> elige «Externo» y agrega tu correo como usuario de prueba.</li>
-      <li>En <b>Credenciales → Crear credenciales → ID de cliente OAuth</b>, tipo «Aplicación web».</li>
-      <li>En «Orígenes autorizados de JavaScript» agrega: <code>${esc(origin)}</code></li>
-      <li>Copia el ID de cliente y pégalo arriba.</li>
-    </ol>`,
-    [
-      { text: 'Guardar', cls: 'primary', fn: () => {
-        const n = settings();
-        n.clientId = $('cid').value.trim();
-        n.folderId = $('fid').value.trim().replace(/^.*\/folders\//, '').replace(/[?#].*$/, '');
-        saveSettings(n); token = null; closeSheet();
-        toast(n.clientId ? 'Subida directa a Drive activada' : 'Ajustes guardados');
-        if (n.clientId) loadGis().catch(() => {});
-      } },
-      { text: 'Cancelar', fn: closeSheet },
-    ]);
-}
-$('btnSettings').onclick = openSettings;
+$('btnPrint').onclick = openPrintSheet;
 
 /* ---------------------------------------------------------------- hoja inferior */
 function openSheet(title, html, actions) {
@@ -612,4 +566,3 @@ if ('serviceWorker' in navigator) {
 /* ---------------------------------------------------------------- inicio */
 renderRecents();
 receiveShared();
-if (settings().clientId && navigator.onLine) loadGis().catch(() => {});
